@@ -1,0 +1,36 @@
+{
+  "name": "message-broker-comparison-ts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Scenario-based comparison of scheduled-message brokers (TypeScript side)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "scenarios": "tsx src/index.ts",
+    "scenarios:artemis": "tsx src/index.ts artemis",
+    "scenarios:rabbitmq": "tsx src/index.ts rabbitmq",
+    "scenarios:all": "tsx src/index.ts all",
+    "fault": "tsx src/fault.ts",
+    "demo:publish": "tsx src/interactive/publish.ts",
+    "demo:subscribe": "tsx src/interactive/subscribe.ts",
+    "demo:worker": "tsx src/interactive/worker.ts",
+    "demo:schedule": "tsx src/interactive/schedule.ts"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4",
+    "cockatiel": "^3.2.1",
+    "rhea": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.5",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

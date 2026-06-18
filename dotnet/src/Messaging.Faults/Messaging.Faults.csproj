@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Messaging.Abstractions/Messaging.Abstractions.csproj" />
+    <ProjectReference Include="../Messaging.Scenarios/Messaging.Scenarios.csproj" />
+    <ProjectReference Include="../Messaging.Resilience/Messaging.Resilience.csproj" />
+  </ItemGroup>
+
+</Project>

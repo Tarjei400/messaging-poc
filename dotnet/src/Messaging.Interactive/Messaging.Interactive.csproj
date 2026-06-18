@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>mbc</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Messaging.Abstractions/Messaging.Abstractions.csproj" />
+    <ProjectReference Include="../Messaging.Scenarios/Messaging.Scenarios.csproj" />
+    <ProjectReference Include="../Messaging.InMemory/Messaging.InMemory.csproj" />
+    <ProjectReference Include="../Messaging.Artemis/Messaging.Artemis.csproj" />
+    <ProjectReference Include="../Messaging.RabbitMq/Messaging.RabbitMq.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,41 @@
+name: mbc
+
+services:
+  # Apache ActiveMQ Artemis — top candidate.
+  # AMQP on 5672, management console + Jolokia on 8161.
+  artemis:
+    image: apache/activemq-artemis:2.42.0
+    container_name: mbc-artemis
+    environment:
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+      ANONYMOUS_LOGIN: "false"
+    ports:
+      - "5672:5672"     # AMQP
+      - "8161:8161"     # web console + Jolokia
+    volumes:
+      # The image ships a pre-created instance, so etc-override (which only runs
+      # on first creation) is skipped — bind the DLA-aware broker.xml directly
+      # over the instance config instead.
+      - ./artemis/broker.xml:/var/lib/artemis-instance/etc/broker.xml:ro
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf -u admin:admin http://localhost:8161/console/jolokia/version || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # RabbitMQ with the delayed-message-exchange plugin baked in (see Dockerfile).
+  # AMQP is published on host 5673 so it doesn't clash with Artemis on 5672.
+  rabbitmq:
+    build:
+      context: .
+      dockerfile: rabbitmq.Dockerfile
+    container_name: mbc-rabbitmq
+    ports:
+      - "5673:5672"     # AMQP 0.9.1 (host 5673 -> container 5672)
+      - "15672:15672"   # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
