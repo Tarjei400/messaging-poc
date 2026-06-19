@@ -40,6 +40,9 @@
       <journal-max-io>4096</journal-max-io>
       <disk-scan-period>5000</disk-scan-period>
       <max-disk-usage>90</max-disk-usage>
+      <!-- ADDED: scan for expired messages every 1s (default 30s) so the S16
+           TTL → expiry scenario is observable within a few seconds. -->
+      <message-expiry-scan-period>1000</message-expiry-scan-period>
       <critical-analyzer>true</critical-analyzer>
       <critical-analyzer-timeout>120000</critical-analyzer-timeout>
       <critical-analyzer-check-period>60000</critical-analyzer-check-period>
@@ -80,6 +83,72 @@
             <address-full-policy>PAGE</address-full-policy>
             <auto-create-queues>true</auto-create-queues>
             <auto-create-addresses>true</auto-create-addresses>
+         </address-setting>
+
+         <!-- ADDED: S11 non-blocking retry → dead-letter. A poison message on an
+              mbc.s11.* address is redelivered with a 250ms backoff (Artemis
+              schedules the redelivery, so the main queue is not blocked) and
+              dead-lettered to mbc.DLQ after 6 delivery attempts (initial + 5
+              retries). Keep max-delivery-attempts / redelivery-delay in sync with
+              the S11 scenario constants (MaxDeliveries=6, RetryDelayMs=250). This
+              more specific match wins over mbc.# for mbc.s11.* addresses. -->
+         <address-setting match="mbc.s11.#">
+            <dead-letter-address>mbc.DLQ</dead-letter-address>
+            <expiry-address>ExpiryQueue</expiry-address>
+            <max-delivery-attempts>6</max-delivery-attempts>
+            <redelivery-delay>250</redelivery-delay>
+            <message-counter-history-day-limit>10</message-counter-history-day-limit>
+            <address-full-policy>PAGE</address-full-policy>
+            <auto-create-queues>true</auto-create-queues>
+            <auto-create-addresses>true</auto-create-addresses>
+            <auto-delete-queues>false</auto-delete-queues>
+            <auto-delete-addresses>false</auto-delete-addresses>
+            <max-size-bytes>-1</max-size-bytes>
+            <max-size-messages>-1</max-size-messages>
+         </address-setting>
+
+         <!-- ADDED: S16 TTL → expiry. A message on an mbc.s16.* address whose
+              TTL elapses un-consumed is routed to the multicast address
+              mbc.EXPIRY (distinct from the dead-letter address, which is for
+              poison messages). expiry-delay=-1 keeps the per-message TTL the
+              producer sets (no broker-imposed default). This more specific match
+              wins over mbc.# for mbc.s16.* addresses. -->
+         <address-setting match="mbc.s16.#">
+            <dead-letter-address>mbc.DLQ</dead-letter-address>
+            <expiry-address>mbc.EXPIRY</expiry-address>
+            <expiry-delay>-1</expiry-delay>
+            <max-delivery-attempts>3</max-delivery-attempts>
+            <redelivery-delay>0</redelivery-delay>
+            <message-counter-history-day-limit>10</message-counter-history-day-limit>
+            <address-full-policy>PAGE</address-full-policy>
+            <auto-create-queues>true</auto-create-queues>
+            <auto-create-addresses>true</auto-create-addresses>
+            <auto-delete-queues>false</auto-delete-queues>
+            <auto-delete-addresses>false</auto-delete-addresses>
+            <max-size-bytes>-1</max-size-bytes>
+            <max-size-messages>-1</max-size-messages>
+         </address-setting>
+
+         <!-- ADDED: S18 single active consumer / failover. Every queue
+              auto-created under an mbc.s18.* address is EXCLUSIVE, so Artemis
+              dispatches all of its messages to one consumer at a time and
+              promotes a standby when the active consumer drops (order
+              preserved). This is Artemis's native single-active-consumer
+              mechanism. This more specific match wins over mbc.# for mbc.s18.*. -->
+         <address-setting match="mbc.s18.#">
+            <default-exclusive-queue>true</default-exclusive-queue>
+            <dead-letter-address>mbc.DLQ</dead-letter-address>
+            <expiry-address>ExpiryQueue</expiry-address>
+            <max-delivery-attempts>3</max-delivery-attempts>
+            <redelivery-delay>0</redelivery-delay>
+            <message-counter-history-day-limit>10</message-counter-history-day-limit>
+            <address-full-policy>PAGE</address-full-policy>
+            <auto-create-queues>true</auto-create-queues>
+            <auto-create-addresses>true</auto-create-addresses>
+            <auto-delete-queues>false</auto-delete-queues>
+            <auto-delete-addresses>false</auto-delete-addresses>
+            <max-size-bytes>-1</max-size-bytes>
+            <max-size-messages>-1</max-size-messages>
          </address-setting>
 
          <!-- ADDED: fast, observable dead-lettering for the bus scenarios. A
@@ -135,7 +204,12 @@
          <address name="mbc.DLQ">
             <multicast/>
          </address>
+         <!-- ADDED: multicast expiry address read by ${topic}.expiry subscribers (S16). -->
+         <address name="mbc.EXPIRY">
+            <multicast/>
+         </address>
       </addresses>
 
    </core>
+
 </configuration>

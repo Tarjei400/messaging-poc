@@ -123,9 +123,10 @@ public sealed class ResilientMessageScheduler : IMessageScheduler, IMessageBus
         _pipeline.ExecuteAsync(async token => await InnerBus.ConnectBusAsync(token), ct).AsTask();
 
     public Task PublishAsync(
-        string topic, string payload, string? routingKey = null, CancellationToken ct = default) =>
+        string topic, string payload, string? routingKey = null,
+        PublishOptions? options = null, CancellationToken ct = default) =>
         _pipeline.ExecuteAsync(
-            async token => await InnerBus.PublishAsync(topic, payload, routingKey, token), ct).AsTask();
+            async token => await InnerBus.PublishAsync(topic, payload, routingKey, options, token), ct).AsTask();
 
     public Task<ISubscription> SubscribeAsync(
         string topic, AckHandler handler, SubscribeOptions? options = null, CancellationToken ct = default) =>

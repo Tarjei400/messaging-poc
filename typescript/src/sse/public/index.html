@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SSE cross-instance cluster</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1a1a1a;
+        --muted: #666;
+        --border: #ddd;
+        --accent: #2563eb;
+        --user: #0a7;
+        --org: #b60;
+        --bg-card: #fafafa;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e8e8e8;
+          --muted: #999;
+          --border: #333;
+          --bg-card: #1c1c1c;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        margin: 0 auto;
+        max-width: 880px;
+        padding: 1.5rem;
+        color: var(--fg);
+        line-height: 1.45;
+      }
+      h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+      .legend {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: .75rem 1rem;
+        font-size: .85rem;
+        margin: 1rem 0;
+      }
+      .legend code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 4px; }
+      fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 1rem 0; padding: .75rem 1rem; }
+      legend { font-weight: 600; padding: 0 .4rem; }
+      label { font-size: .8rem; color: var(--muted); display: block; }
+      input {
+        font: inherit; padding: .35rem .5rem; border: 1px solid var(--border);
+        border-radius: 6px; background: transparent; color: inherit; width: 100%;
+      }
+      .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+      .row > div { flex: 1 1 140px; }
+      button {
+        font: inherit; padding: .4rem .9rem; border: 0; border-radius: 6px;
+        background: var(--accent); color: #fff; cursor: pointer;
+      }
+      button.secondary { background: #555; }
+      button:disabled { opacity: .5; cursor: default; }
+      #status { font-size: .8rem; color: var(--muted); margin-left: .5rem; }
+      #feed { list-style: none; padding: 0; margin: .5rem 0; font-size: .85rem; }
+      #feed li {
+        border: 1px solid var(--border); border-radius: 6px; padding: .4rem .6rem;
+        margin-bottom: .4rem; background: var(--bg-card);
+      }
+      .tag { font-size: .7rem; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; margin-right: .5rem; }
+      .tag.user { background: var(--user); color: #fff; }
+      .tag.org { background: var(--org); color: #fff; }
+      .meta { color: var(--muted); font-size: .72rem; }
+    </style>
+  </head>
+  <body>
+    <h1>SSE cross-instance cluster</h1>
+    <p class="meta">The broker is a horizontal-scaling backplane: a message published from <em>any</em> instance reaches a client connected to a <em>different</em> instance — no presence registry, just topic routing.</p>
+
+    <div class="legend">
+      <strong>Demo:</strong> 3 users —
+      <code>alice</code> &amp; <code>bob</code> in org <code>acme</code>, <code>carol</code> in org <code>globex</code>.
+      Suggested wiring: alice on <code>:7001</code>, bob on <code>:7002</code>, carol on <code>:7001</code>.
+      <ul style="margin:.4rem 0 0">
+        <li>Send to user <code>alice</code> → only alice.</li>
+        <li>Send to org <code>acme</code> → alice + bob, <strong>across both instances</strong>.</li>
+        <li>Send to org <code>globex</code> → only carol.</li>
+      </ul>
+    </div>
+
+    <fieldset>
+      <legend>Connect</legend>
+      <div class="row">
+        <div><label>userId</label><input id="userId" value="alice" /></div>
+        <div><label>orgId</label><input id="orgId" value="acme" /></div>
+        <div><label>instance base URL</label><input id="base" value="http://localhost:7001" /></div>
+        <div style="flex:0 0 auto">
+          <button id="connect">Connect</button>
+          <button id="disconnect" class="secondary" disabled>Disconnect</button>
+          <span id="status">disconnected</span>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Send to user (direct)</legend>
+      <div class="row">
+        <div><label>target userId</label><input id="toUser" value="alice" /></div>
+        <div><label>text</label><input id="userText" value="hi alice" /></div>
+        <div><label>publish via instance</label><input id="userVia" value="http://localhost:7002" /></div>
+        <div style="flex:0 0 auto"><button id="sendUser">Send to user</button></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Send to org (broadcast)</legend>
+      <div class="row">
+        <div><label>target orgId</label><input id="toOrg" value="acme" /></div>
+        <div><label>text</label><input id="orgText" value="acme all-hands" /></div>
+        <div><label>publish via instance</label><input id="orgVia" value="http://localhost:7001" /></div>
+        <div style="flex:0 0 auto"><button id="sendOrg">Send to org</button></div>
+      </div>
+    </fieldset>
+
+    <h2 style="font-size:1rem">Live feed</h2>
+    <ul id="feed"></ul>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let es = null;
+
+      function log(html) {
+        const li = document.createElement('li');
+        li.innerHTML = html;
+        $('feed').prepend(li);
+      }
+
+      function setStatus(text) { $('status').textContent = text; }
+
+      $('connect').onclick = () => {
+        if (es) es.close();
+        const base = $('base').value.replace(/\/$/, '');
+        const userId = encodeURIComponent($('userId').value);
+        const orgId = encodeURIComponent($('orgId').value);
+        const url = `${base}/events?userId=${userId}&orgId=${orgId}`;
+        es = new EventSource(url);
+        setStatus('connecting…');
+        $('connect').disabled = true;
+        $('disconnect').disabled = false;
+
+        es.addEventListener('hello', (e) => {
+          const d = JSON.parse(e.data);
+          setStatus(`connected to ${d.instanceId} as ${d.userId}@${d.orgId}`);
+        });
+        es.onmessage = (e) => {
+          let d;
+          try { d = JSON.parse(e.data); } catch { d = { message: e.data }; }
+          const scope = d.scope || '?';
+          const m = d.message || {};
+          log(
+            `<span class="tag ${scope}">${scope}</span>` +
+            `<strong>${m.from ?? '?'}</strong>: ${m.text ?? ''} ` +
+            `<span class="meta">arrived on <b>${d.instanceId}</b>` +
+            (m.via ? ` · published via ${m.via}` : '') +
+            (m.at ? ` · ${new Date(m.at).toLocaleTimeString()}` : '') + `</span>`,
+          );
+        };
+        es.onerror = () => setStatus('connection error / reconnecting…');
+      };
+
+      $('disconnect').onclick = () => {
+        if (es) es.close();
+        es = null;
+        setStatus('disconnected');
+        $('connect').disabled = false;
+        $('disconnect').disabled = true;
+      };
+
+      async function publish(via, to, text) {
+        const base = via.replace(/\/$/, '');
+        const from = $('userId').value || 'anon';
+        const res = await fetch(`${base}/publish`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ to, from, text }),
+        });
+        if (!res.ok) log(`<span class="meta">publish failed: ${res.status}</span>`);
+      }
+
+      $('sendUser').onclick = () =>
+        publish($('userVia').value, { type: 'user', id: $('toUser').value }, $('userText').value);
+      $('sendOrg').onclick = () =>
+        publish($('orgVia').value, { type: 'org', id: $('toOrg').value }, $('orgText').value);
+    </script>
+  </body>
+</html>

@@ -30,6 +30,16 @@ public static class ScenarioRegistry
         new ExplicitAck(),
         new PoisonDlq(),
         new CompetingConsumers(),
+        new IdempotentConsumer(),
+        new RetryQueue(),
+        new MessageGroups(),
+        new BrokerNativeDedup(),
+        new Priority(),
+        new RequestReply(),
+        new TtlExpiry(),
+        new DurableSubscription(),
+        new SingleActiveConsumer(),
+        new StreamReplay(),
     };
 }
 

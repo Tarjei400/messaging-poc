@@ -14,4 +14,11 @@ ADD ${PLUGIN_URL} /opt/rabbitmq/plugins/rabbitmq_delayed_message_exchange-${PLUG
 # Make the archive world-readable so the node can load it.
 RUN chmod 0644 /opt/rabbitmq/plugins/rabbitmq_delayed_message_exchange-${PLUGIN_VERSION}.ez
 
-RUN rabbitmq-plugins enable --offline rabbitmq_delayed_message_exchange
+# Enable the delayed-message plugin (scheduling, S1–S4) AND the bundled
+# consistent-hash exchange plugin (message groups, S12). The consistent-hash
+# exchange ships with RabbitMQ — no extra .ez download needed; it just has to be
+# enabled. It routes by a hash of the routing key (we publish with routing key =
+# groupId), pinning each group to one queue → per-group order across consumers.
+RUN rabbitmq-plugins enable --offline \
+      rabbitmq_delayed_message_exchange \
+      rabbitmq_consistent_hash_exchange

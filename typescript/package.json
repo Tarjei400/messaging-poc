@@ -14,16 +14,23 @@
     "scenarios": "tsx src/index.ts",
     "scenarios:artemis": "tsx src/index.ts artemis",
     "scenarios:rabbitmq": "tsx src/index.ts rabbitmq",
+    "scenarios:kafka": "tsx src/index.ts kafka",
     "scenarios:all": "tsx src/index.ts all",
     "fault": "tsx src/fault.ts",
     "demo:publish": "tsx src/interactive/publish.ts",
     "demo:subscribe": "tsx src/interactive/subscribe.ts",
     "demo:worker": "tsx src/interactive/worker.ts",
-    "demo:schedule": "tsx src/interactive/schedule.ts"
+    "demo:schedule": "tsx src/interactive/schedule.ts",
+    "sse": "tsx src/sse/server.ts",
+    "sse:cluster": "tsx src/sse/cluster.ts",
+    "sse:docs": "tsx src/sse/docs/generate.ts",
+    "test:sse": "vitest run --config vitest.sse.config.ts"
   },
   "dependencies": {
     "amqplib": "^0.10.4",
     "cockatiel": "^3.2.1",
+    "ioredis": "^5.11.1",
+    "kafkajs": "^2.2.4",
     "rhea": "^3.0.3"
   },
   "devDependencies": {

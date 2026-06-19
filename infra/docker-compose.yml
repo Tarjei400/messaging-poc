@@ -39,3 +39,53 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # Apache Kafka — single-node KRaft (no ZooKeeper). The adapter is a faithful,
+  # minimal mapping used to see how many suite scenarios a partitioned log can
+  # satisfy. Published on host 9092; the advertised listener must name the host
+  # so clients connecting from outside the container can reach the broker.
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: mbc-kafka
+    ports:
+      - "9092:9092"     # external (host) listener
+    environment:
+      KAFKA_NODE_ID: 1
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      # Bind on all interfaces with an empty host (":9092"). NOT "0.0.0.0:9092":
+      # the image's storage-format step re-derives advertised.listeners from a
+      # literal 0.0.0.0 and refuses to boot ("nonroutable meta-address").
+      KAFKA_LISTENERS: CONTROLLER://:9093,PLAINTEXT://:9092
+      # Advertise localhost so the host-side test process reaches the broker
+      # through the published 9092 port.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single-node: every replication/quorum factor collapses to 1.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Redis — used by the idempotent-consumer demo (S10) for time-windowed
+  # deduplication. Not required for the automated scenario test suite, which
+  # uses the in-memory idempotency store.
+  redis:
+    image: redis:7-alpine
+    container_name: mbc-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

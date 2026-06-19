@@ -7,5 +7,8 @@ export default defineConfig({
     // default. Individual fast tests are unaffected.
     testTimeout: 30000,
     hookTimeout: 30000,
+    // The SSE cluster test needs live brokers and is run via its own `test:sse`
+    // script — keep it out of the no-broker unit run (`npm test`).
+    exclude: ['**/node_modules/**', '**/dist/**', 'test/sse.test.ts'],
   },
 });

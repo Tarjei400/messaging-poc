@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Messaging.Abstractions/Messaging.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Messaging.Idempotency/Messaging.Idempotency.csproj" />
     <ProjectReference Include="../../src/Messaging.InMemory/Messaging.InMemory.csproj" />
     <ProjectReference Include="../../src/Messaging.Resilience/Messaging.Resilience.csproj" />
     <ProjectReference Include="../../src/Messaging.Scenarios/Messaging.Scenarios.csproj" />

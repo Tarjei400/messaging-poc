@@ -108,12 +108,23 @@ describe('scenario registry', () => {
   });
 
   it('exposes the expected ordered bus suite', () => {
-    expect(ALL_BUS_SCENARIOS.map((s) => s.name.slice(0, 2))).toEqual([
+    expect(ALL_BUS_SCENARIOS.map((s) => s.name.split(' ')[0])).toEqual([
       'S5',
       'S6',
       'S7',
       'S8',
       'S9',
+      'S10',
+      'S11',
+      'S12',
+      'S13',
+      'S14',
+      'S15',
+      'S16',
+      'S17',
+      'S18',
+      'S19',
+      'S20',
     ]);
   });
 });

@@ -1,0 +1,89 @@
+asyncapi: 2.6.0
+info:
+  title: SSE cross-instance cluster
+  version: 1.0.0
+  description: "Single broker topic backing the cross-instance SSE cluster. Every browser connection opens two transient (exclusive + auto-delete) subscriptions on this topic — one user-direct, one org-broadcast — so the broker fans messages across server instances with no presence registry."
+defaultContentType: application/json
+channels:
+  "user.{userId}":
+    description: "Channel mbc.sse, routing key user.{userId}."
+    parameters:
+      userId:
+        description: "User-direct routing key. A message published here reaches only the connection(s) for that single user."
+        schema:
+          type: string
+    publish:
+      operationId: publish-to-user
+      summary: "Publish a message directly to one user."
+      description: "On `POST /publish` with `{ to: { type: \"user\", id } }`."
+      message:
+        $ref: '#/components/messages/SseEnvelope'
+    subscribe:
+      operationId: subscribe-user-stream
+      summary: "Receive user-direct messages on an SSE connection."
+      description: "When a client opens `GET /events?userId&orgId`; bound as a transient subscription for the connection lifetime."
+      message:
+        $ref: '#/components/messages/SseFrame'
+  "org.{orgId}":
+    description: "Channel mbc.sse, routing key org.{orgId}."
+    parameters:
+      orgId:
+        description: "Org-broadcast routing key. A message published here fans out to every connection in that org, across all server instances."
+        schema:
+          type: string
+    publish:
+      operationId: publish-to-org
+      summary: "Broadcast a message to every member of an org."
+      description: "On `POST /publish` with `{ to: { type: \"org\", id } }`."
+      message:
+        $ref: '#/components/messages/SseEnvelope'
+    subscribe:
+      operationId: subscribe-org-stream
+      summary: "Receive org-broadcast messages on an SSE connection."
+      description: "When a client opens `GET /events?userId&orgId`; bound as a transient subscription for the connection lifetime."
+      message:
+        $ref: '#/components/messages/SseFrame'
+components:
+  messages:
+    SseEnvelope:
+      name: SseEnvelope
+      title: Published message envelope
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SseEnvelope'
+    SseFrame:
+      name: SseFrame
+      title: SSE data frame delivered to a client
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SseFrame'
+  schemas:
+    SseEnvelope:
+      type: object
+      properties:
+        from:
+          type: string
+          description: "Display name of the sender (defaults to `anon`)."
+        text:
+          type: string
+          description: "Free-text body of the message."
+        to:
+          type: object
+          description: "The publish target: `{ type: \"user\" | \"org\", id }`."
+        via:
+          type: string
+          description: "Id of the instance that accepted and published the message."
+        at:
+          type: string
+          description: "Timestamp set when the message was published."
+    SseFrame:
+      type: object
+      properties:
+        scope:
+          type: string
+          description: "Which subscription matched: user-direct or org-broadcast."
+        instanceId:
+          type: string
+          description: "Id of the instance whose SSE stream delivered this frame."
+        message:
+          $ref: '#/components/schemas/SseEnvelope'

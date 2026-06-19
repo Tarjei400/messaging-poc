@@ -56,10 +56,12 @@ public sealed class FaultInjectingBus : IMessageBus
         return _inner.ConnectBusAsync(ct);
     }
 
-    public Task PublishAsync(string topic, string payload, string? routingKey = null, CancellationToken ct = default)
+    public Task PublishAsync(
+        string topic, string payload, string? routingKey = null,
+        PublishOptions? options = null, CancellationToken ct = default)
     {
         Guard(nameof(PublishAsync));
-        return _inner.PublishAsync(topic, payload, routingKey, ct);
+        return _inner.PublishAsync(topic, payload, routingKey, options, ct);
     }
 
     public Task<ISubscription> SubscribeAsync(

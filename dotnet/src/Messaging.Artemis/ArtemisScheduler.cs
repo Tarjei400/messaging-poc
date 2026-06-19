@@ -45,6 +45,9 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
 {
     private const string ScheduleIdKey = "scheduleId";
     private const string RoutingKeyProp = "routingKey";
+    // Artemis honours these well-known message properties natively.
+    private const string GroupIdProp = "_AMQ_GROUP_ID"; // pins a group to one consumer (S12)
+    private const string DuplIdProp = "_AMQ_DUPL_ID"; // producer dedup within the broker (S13)
     private static readonly Symbol DeliveryTimeAnnotation = new("x-opt-delivery-time");
 
     // Capability symbols telling Artemis how to auto-create the address:
@@ -64,6 +67,14 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
     private static readonly string ArtemisDla =
         Environment.GetEnvironmentVariable("ARTEMIS_DLA") ?? "mbc.DLQ";
 
+    /// <summary>
+    /// The broker-configured multicast expiry address for <c>mbc.s16.#</c> (see
+    /// infra/artemis broker.xml). Our logical <c>{topic}.expiry</c> subscriptions
+    /// read from here, mirroring the <c>.dlq</c> → mbc.DLQ mapping.
+    /// </summary>
+    private static readonly string ArtemisExpiry =
+        Environment.GetEnvironmentVariable("ARTEMIS_EXPIRY") ?? "mbc.EXPIRY";
+
     public string Name => "Apache ActiveMQ Artemis";
 
     public BusCapabilities BusCapabilities { get; } = new(
@@ -71,7 +82,9 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
         SupportsFanout: true,
         SupportsManualAck: true,
         SupportsDeadLetter: true,
-        ReportsDeliveryCount: true); // AMQP header delivery-count is precise
+        ReportsDeliveryCount: true, // AMQP header delivery-count is precise
+        SupportsDedup: true, // broker.xml amqpDuplicateDetection=true + _AMQ_DUPL_ID
+        SupportsStreamReplay: false); // no offset-replay of consumed history
 
     public Capabilities Capabilities { get; }
 
@@ -202,11 +215,45 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
     }
 
     public Task PublishAsync(
-        string topic, string payload, string? routingKey = null, CancellationToken ct = default)
+        string topic, string payload, string? routingKey = null,
+        PublishOptions? options = null, CancellationToken ct = default)
     {
         var sender = GetBusSender(topic);
         var message = new Message(payload) { ApplicationProperties = new ApplicationProperties() };
         message.ApplicationProperties[RoutingKeyProp] = routingKey ?? topic;
+        if (options?.Headers is { } headers)
+            foreach (var kv in headers) message.ApplicationProperties[kv.Key] = kv.Value;
+        // S12: set the standard AMQP `group-id` message property. Artemis maps the
+        // AMQP group-id onto its native message-group machinery and pins the group
+        // to a single consumer on the (shared) queue. Mirror it onto the
+        // `_AMQ_GROUP_ID` application property so the value is visible to consumers.
+        if (options?.GroupId is { } g)
+        {
+            message.Properties ??= new Properties();
+            message.Properties.GroupId = g;
+            message.ApplicationProperties[GroupIdProp] = g;
+        }
+        if (options?.DedupId is { } d) message.ApplicationProperties[DuplIdProp] = d;
+        if (options?.Priority is { } p)
+        {
+            message.Header ??= new Header();
+            message.Header.Priority = (byte)p;
+        }
+        if (options?.TtlMs is { } ttl)
+        {
+            message.Header ??= new Header();
+            message.Header.Ttl = (uint)ttl;
+        }
+        if (options?.ReplyTo is { } rt)
+        {
+            message.Properties ??= new Properties();
+            message.Properties.ReplyTo = rt;
+        }
+        if (options?.CorrelationId is { } cid)
+        {
+            message.Properties ??= new Properties();
+            message.Properties.CorrelationId = cid;
+        }
         return sender.SendAsync(message);
     }
 
@@ -218,7 +265,12 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
 
         // A `{topic}.dlq` subscription reads from the broker's multicast DLA, where
         // Artemis routes messages after `max-delivery-attempts` (set in broker.xml).
-        var address = topic.EndsWith(".dlq", StringComparison.Ordinal) ? ArtemisDla : topic;
+        // A `{topic}.expiry` subscription likewise reads from the multicast expiry
+        // address, where Artemis routes a message whose TTL elapsed un-consumed.
+        var address =
+            topic.EndsWith(".dlq", StringComparison.Ordinal) ? ArtemisDla
+            : topic.EndsWith(".expiry", StringComparison.Ordinal) ? ArtemisExpiry
+            : topic;
         var fqqn = $"{address}::{subscriberId}";
 
         var source = new Source { Address = fqqn, Capabilities = MulticastCaps };
@@ -236,7 +288,12 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
         var receiver = new ReceiverLink(_session!, $"brcv-{Guid.NewGuid():N}", source, null);
         // The consumer settles explicitly (ack/nack), so the Start callback never
         // auto-accepts — it hands the message to the handler with manual control.
-        receiver.Start(20, (link, message) =>
+        // Credit 1 ≈ prefetch 1: the broker pushes one unsettled message at a time.
+        // This gives fair work-sharing across competing consumers (S9) and, crucially,
+        // lets broker-side priority ordering take effect (S14) — a large credit window
+        // would drain the queue to one consumer before priority could reorder it.
+        // AMQPNetLite re-issues credit automatically as each message is settled.
+        receiver.Start(1, (link, message) =>
         {
             _ = handler(new ArtemisIncomingMessage(receiver, message, address));
         });
@@ -269,12 +326,17 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
         _jolokia.Dispose();
     }
 
-    /// <summary>Close an AMQP object, tolerating a link/session already mid-detach.</summary>
+    /// <summary>Close an AMQP object, tolerating a link/session already mid-detach.
+    /// Uses a short close timeout so a link the broker is slow to detach (e.g. a
+    /// receiver closed before it ever drew a message — the S17 durable warmup) does
+    /// not block on AMQPNetLite's 60s default.</summary>
     private static async Task SafeCloseAsync(AmqpObject obj)
     {
-        try { await obj.CloseAsync().ConfigureAwait(false); }
+        try { await obj.CloseAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
         catch (AmqpException) { /* already closing/closed (e.g. consumer crash) */ }
         catch (ObjectDisposedException) { /* already disposed */ }
+        catch (TimeoutException) { /* broker slow to detach; the link is abandoned */ }
+        catch (OperationCanceledException) { /* close raced a dispose */ }
     }
 
     private sealed class ArtemisSubscription(ReceiverLink receiver) : ISubscription
@@ -304,6 +366,12 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
                 foreach (var key in map.Keys)
                     headers[key.ToString()!] = map[key]?.ToString() ?? string.Empty;
             Headers = headers;
+
+            ReplyTo = message.Properties?.ReplyTo;
+            CorrelationId = message.Properties?.CorrelationId?.ToString();
+            GroupId = message.Properties?.GroupId
+                ?? (headers.TryGetValue(GroupIdProp, out var g) ? g : null);
+            if (message.Header is { } h && h.Priority != default) Priority = h.Priority;
         }
 
         public string Id { get; }
@@ -311,6 +379,10 @@ public sealed class ArtemisScheduler : IMessageScheduler, IMessageBus
         public string Body { get; }
         public IReadOnlyDictionary<string, string> Headers { get; }
         public int? DeliveryCount { get; }
+        public string? ReplyTo { get; }
+        public string? CorrelationId { get; }
+        public string? GroupId { get; }
+        public int? Priority { get; }
 
         public Task AckAsync()
         {

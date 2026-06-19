@@ -30,9 +30,41 @@ export interface IncomingMessage extends ReceivedMessage {
    *  Absent on brokers that only report a redelivered boolean (RabbitMQ classic
    *  queues) — see `BusCapabilities.reportsDeliveryCount`. */
   readonly deliveryCount?: number;
+  /** Address a reply should be sent to (request/reply — S15). */
+  readonly replyTo?: string;
+  /** Correlates a reply with its request (request/reply — S15). */
+  readonly correlationId?: string;
+  /** Ordering/affinity key — messages of the same group keep their order and
+   *  are pinned to one consumer (S12). */
+  readonly groupId?: string;
+  /** Broker-reported message priority, when exposed (S14). */
+  readonly priority?: number;
 }
 
 export type AckHandler = (message: IncomingMessage) => void | Promise<void>;
+
+/**
+ * Per-message publish metadata. Each adapter maps these onto its native AMQP
+ * properties (Artemis `_AMQ_GROUP_ID`/`_AMQ_DUPL_ID`/priority/reply-to/ttl;
+ * RabbitMQ `BasicProperties` + headers). All fields are optional — a bare
+ * `publish(topic, body)` keeps working unchanged.
+ */
+export interface PublishOptions {
+  /** Broker priority (higher = sooner). RabbitMQ 0–9; Artemis 0–9 (native). */
+  readonly priority?: number;
+  /** Ordering/affinity key — same group → ordered, pinned to one consumer (S12). */
+  readonly groupId?: string;
+  /** Producer dedup key — the broker drops a repeat within its window (S13). */
+  readonly dedupId?: string;
+  /** Where a reply should be sent (request/reply — S15). */
+  readonly replyTo?: string;
+  /** Correlates a reply with its request (request/reply — S15). */
+  readonly correlationId?: string;
+  /** Time-to-live before the message expires to the expiry address (S16). */
+  readonly ttlMs?: number;
+  /** Arbitrary application headers. */
+  readonly headers?: Readonly<Record<string, string>>;
+}
 
 export interface SubscribeOptions {
   /** `topic` = routing-key filtered; `fanout` = every subscriber gets a copy. */
@@ -46,6 +78,35 @@ export interface SubscribeOptions {
   readonly deadLetter?: boolean;
   /** Number of delivery attempts before a message is dead-lettered. */
   readonly maxDeliveries?: number;
+  /** Delay (ms) before a nacked message is redelivered. When set (with
+   *  `deadLetter`), the adapter parks the failed message in a dedicated retry
+   *  queue instead of requeuing it in place, so the main queue keeps flowing
+   *  (non-blocking retry). Adapters that drive retry from broker config (Artemis
+   *  `redelivery-delay`) treat this as advisory — see the adapter notes. */
+  readonly retryDelayMs?: number;
+  /** Preserve per-group order across competing consumers — each `groupId` is
+   *  pinned to one consumer (S12). Artemis message groups / RabbitMQ
+   *  consistent-hash exchange / in-memory group affinity. */
+  readonly partitionByGroup?: boolean;
+  /** Only one consumer on the shared queue is active at a time; a standby takes
+   *  over if it drops, preserving order (S18). */
+  readonly singleActiveConsumer?: boolean;
+  /** Replay the whole retained log from the beginning rather than only new
+   *  messages (S19). Requires `BusCapabilities.supportsStreamReplay`. */
+  readonly streamReplay?: boolean;
+  /** Transient per-connection subscription (exclusive + auto-delete) — the queue
+   *  vanishes when the subscriber disconnects. Used by the SSE cluster so each
+   *  client connection doesn't leak a durable queue. */
+  readonly transient?: boolean;
+  /** Declare the queue as priority-capable so `PublishOptions.priority` is
+   *  honoured (RabbitMQ `x-max-priority`; no-op where priority is native). */
+  readonly priorityQueue?: boolean;
+  /** Declare the queue so an unconsumed message expires to the expiry address
+   *  (S16). On RabbitMQ this wires `x-dead-letter-exchange` → the expiry fanout
+   *  (per-message `expiration` then routes the expired message there). Artemis
+   *  drives expiry from broker.xml (`mbc.s16.#` → `mbc.EXPIRY`), so this is a
+   *  no-op there; the value mirrors the publish-side `ttlMs`. */
+  readonly ttlMs?: number;
 }
 
 /**
@@ -63,6 +124,18 @@ export interface BusCapabilities {
   readonly supportsDeadLetter: boolean;
   /** Reports a precise per-message delivery count (vs. a redelivered flag only). */
   readonly reportsDeliveryCount: boolean;
+  /** Broker-native producer deduplication (Artemis duplicate detection). When
+   *  false the broker has no native dedup (RabbitMQ) — see app-level S10. */
+  readonly supportsDedup: boolean;
+  /** Offset-based replay of a retained log (RabbitMQ streams). When false the
+   *  broker cannot replay consumed history (Artemis). */
+  readonly supportsStreamReplay: boolean;
+  /** Broker-native ordered message groups — a `groupId` is pinned to one
+   *  consumer so per-group order survives competing consumers (S12). Artemis
+   *  message groups / RabbitMQ consistent-hash exchange / in-memory affinity.
+   *  Optional: absent ≡ supported (only an adapter that genuinely lacks it sets
+   *  this false). */
+  readonly supportsMessageGroups?: boolean;
 }
 
 export interface IMessageBus extends AsyncDisposable {
@@ -74,8 +147,15 @@ export interface IMessageBus extends AsyncDisposable {
   /** Establish the connection and provision any required topic topology. */
   connectBus(): Promise<void>;
 
-  /** Publish to a topic/fanout address (NOT a single point-to-point queue). */
-  publish(topic: Destination, payload: string, routingKey?: string): Promise<void>;
+  /** Publish to a topic/fanout address (NOT a single point-to-point queue).
+   *  `options` carries per-message metadata (priority, group, dedup, reply-to,
+   *  ttl, headers); omit it for a plain publish. */
+  publish(
+    topic: Destination,
+    payload: string,
+    routingKey?: string,
+    options?: PublishOptions,
+  ): Promise<void>;
 
   /** Subscribe to a topic. Each distinct `subscriberId` is an independent queue. */
   subscribe(
@@ -96,6 +176,16 @@ export const DEFAULT_MAX_DELIVERIES = 3;
  */
 export function deadLetterAddress(topic: Destination): Destination {
   return `${topic}.dlq`;
+}
+
+/**
+ * The conventional expiry destination for a topic — where a message that lives
+ * past its TTL lands (distinct from the dead-letter address, which is for poison
+ * messages). Every adapter maps this onto its native expiry concept (Artemis
+ * `expiry-address`, RabbitMQ per-queue `x-message-ttl` + an expiry exchange).
+ */
+export function expiryAddress(topic: Destination): Destination {
+  return `${topic}.expiry`;
 }
 
 /** Narrow an adapter to the bus port without a hard dependency on the class. */

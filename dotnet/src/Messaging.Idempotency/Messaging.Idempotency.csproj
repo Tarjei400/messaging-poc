@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Messaging.Abstractions/Messaging.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- StackExchange.Redis is only needed at runtime when RedisIdempotencyStore
+         is instantiated (interactive/fault-demo mode). Tests use
+         InMemoryIdempotencyStore exclusively, so no Redis is required in CI. -->
+    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+  </ItemGroup>
+
+</Project>

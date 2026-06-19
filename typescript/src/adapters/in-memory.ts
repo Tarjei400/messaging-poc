@@ -6,6 +6,7 @@ import {
   IMessageBus,
   IMessageScheduler,
   MessageHandler,
+  PublishOptions,
   ReceivedMessage,
   ScheduleHandle,
   ScheduledInfo,
@@ -37,6 +38,8 @@ export class InMemoryScheduler implements IMessageScheduler, IMessageBus {
     supportsManualAck: true,
     supportsDeadLetter: true,
     reportsDeliveryCount: true,
+    supportsDedup: true,
+    supportsStreamReplay: true,
   };
   readonly capabilities: Capabilities = {
     protocol: 'in-memory',
@@ -63,8 +66,9 @@ export class InMemoryScheduler implements IMessageScheduler, IMessageBus {
     topic: Destination,
     payload: string,
     routingKey?: string,
+    options?: PublishOptions,
   ): Promise<void> {
-    this.bus.publish(topic, payload, routingKey);
+    this.bus.publish(topic, payload, routingKey, options);
   }
 
   async subscribe(

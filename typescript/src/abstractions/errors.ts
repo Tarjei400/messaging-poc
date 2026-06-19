@@ -7,6 +7,7 @@
  * and keeps the port's contract explicit (Liskov: every adapter either fulfils
  * the operation or fails in this one well-known way).
  */
+
 export class NotSupportedError extends Error {
   constructor(
     public readonly operation: string,
@@ -20,3 +21,18 @@ export class NotSupportedError extends Error {
     this.name = 'NotSupportedError';
   }
 }
+
+
+export class IdempotencyStoreDownError extends Error {
+  constructor(
+      public readonly store: string,
+      reason?: string,
+  ) {
+    super(
+        `'${store}' Idempotency Store is down or not present` +
+        (reason ? `: ${reason}` : ''),
+    );
+    this.name = 'IdempotencyStoreDown';
+  }
+}
+

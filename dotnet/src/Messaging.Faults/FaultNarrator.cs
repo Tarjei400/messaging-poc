@@ -218,8 +218,8 @@ internal sealed class BusOnlyScheduler(IMessageScheduler scheduler, IMessageBus 
         scheduler.ConsumeAsync(d, h, ct);
 
     public Task ConnectBusAsync(CancellationToken ct = default) => bus.ConnectBusAsync(ct);
-    public Task PublishAsync(string t, string p, string? rk = null, CancellationToken ct = default) =>
-        bus.PublishAsync(t, p, rk, ct);
+    public Task PublishAsync(string t, string p, string? rk = null, PublishOptions? o = null, CancellationToken ct = default) =>
+        bus.PublishAsync(t, p, rk, o, ct);
     public Task<ISubscription> SubscribeAsync(string t, AckHandler h, SubscribeOptions? o = null, CancellationToken ct = default) =>
         bus.SubscribeAsync(t, h, o, ct);
 

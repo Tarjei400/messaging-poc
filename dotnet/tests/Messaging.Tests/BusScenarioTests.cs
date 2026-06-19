@@ -17,8 +17,8 @@ public class BusSuiteTests
         var report = await SuiteRunner.RunAsync(scheduler);
         await scheduler.DisposeAsync();
 
-        // Every bus scenario (S5–S9) must pass against the reference engine.
-        foreach (var name in new[] { "S5", "S6", "S7", "S8", "S9" })
+        // Every bus scenario (S5–S11) must pass against the reference engine.
+        foreach (var name in new[] { "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19" })
         {
             var r = report.Results.First(x => x.Name.StartsWith(name));
             Assert.True(r.Status == ScenarioStatus.Pass, $"{r.Name}: {r.Detail}");
@@ -28,8 +28,8 @@ public class BusSuiteTests
     [Fact]
     public void Exposes_the_expected_ordered_bus_suite()
     {
-        var prefixes = ScenarioRegistry.AllBus.Select(s => s.Name[..2]).ToArray();
-        Assert.Equal(new[] { "S5", "S6", "S7", "S8", "S9" }, prefixes);
+        var prefixes = ScenarioRegistry.AllBus.Select(s => s.Name.Split(" ")[0]).ToArray();
+        Assert.Equal(new[] { "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19" }, prefixes);
     }
 }
 
@@ -43,8 +43,8 @@ public class BusUnsupportedTests
         var report = await SuiteRunner.RunAsync(scheduler);
         await scheduler.DisposeAsync();
 
-        // The bus port is absent → every bus scenario (S5–S9) is ⊘ n/a, never ✗.
-        foreach (var name in new[] { "S5", "S6", "S7", "S8", "S9" })
+        // The bus port is absent → every bus scenario (S5–S11) is ⊘ n/a, never ✗.
+        foreach (var name in new[] { "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19" })
         {
             var r = report.Results.First(x => x.Name.StartsWith(name));
             Assert.Equal(ScenarioStatus.Unsupported, r.Status);
@@ -193,8 +193,8 @@ internal sealed class FaultAdapter(IMessageScheduler scheduler, IMessageBus bus)
         scheduler.ConsumeAsync(d, h, ct);
 
     public Task ConnectBusAsync(CancellationToken ct = default) => bus.ConnectBusAsync(ct);
-    public Task PublishAsync(string t, string p, string? rk = null, CancellationToken ct = default) =>
-        bus.PublishAsync(t, p, rk, ct);
+    public Task PublishAsync(string t, string p, string? rk = null, PublishOptions? o = null, CancellationToken ct = default) =>
+        bus.PublishAsync(t, p, rk, o, ct);
     public Task<ISubscription> SubscribeAsync(string t, AckHandler h, SubscribeOptions? o = null, CancellationToken ct = default) =>
         bus.SubscribeAsync(t, h, o, ct);
 

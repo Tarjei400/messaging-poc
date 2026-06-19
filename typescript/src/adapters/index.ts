@@ -2,13 +2,15 @@ import { IMessageScheduler } from '../abstractions';
 import { ResilientScheduler } from '../resilience';
 import { ArtemisScheduler, artemisConfigFromEnv } from './artemis';
 import { InMemoryScheduler } from './in-memory';
+import { KafkaScheduler, kafkaConfigFromEnv } from './kafka';
 import { RabbitMqScheduler, rabbitConfigFromEnv } from './rabbitmq';
 
 export * from './in-memory';
 export * from './artemis';
+export * from './kafka';
 export * from './rabbitmq';
 
-export type BrokerId = 'artemis' | 'rabbitmq' | 'in-memory';
+export type BrokerId = 'artemis' | 'rabbitmq' | 'kafka' | 'in-memory';
 
 /**
  * The single registration point for brokers. Adding a broker is: write an
@@ -18,6 +20,7 @@ export type BrokerId = 'artemis' | 'rabbitmq' | 'in-memory';
 const REGISTRY: Record<BrokerId, () => IMessageScheduler> = {
   artemis: () => new ArtemisScheduler(artemisConfigFromEnv()),
   rabbitmq: () => new RabbitMqScheduler(rabbitConfigFromEnv()),
+  kafka: () => new KafkaScheduler(kafkaConfigFromEnv()),
   'in-memory': () => new InMemoryScheduler(),
 };
 

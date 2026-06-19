@@ -19,7 +19,9 @@ public sealed class InMemoryScheduler : IMessageScheduler, IMessageBus
         SupportsFanout: true,
         SupportsManualAck: true,
         SupportsDeadLetter: true,
-        ReportsDeliveryCount: true);
+        ReportsDeliveryCount: true,
+        SupportsDedup: true,
+        SupportsStreamReplay: true);
 
     public Capabilities Capabilities { get; }
 
@@ -45,9 +47,10 @@ public sealed class InMemoryScheduler : IMessageScheduler, IMessageBus
     public Task ConnectBusAsync(CancellationToken ct = default) => Task.CompletedTask;
 
     public Task PublishAsync(
-        string topic, string payload, string? routingKey = null, CancellationToken ct = default)
+        string topic, string payload, string? routingKey = null,
+        PublishOptions? options = null, CancellationToken ct = default)
     {
-        _bus.Publish(topic, payload, routingKey);
+        _bus.Publish(topic, payload, routingKey, options);
         return Task.CompletedTask;
     }
 

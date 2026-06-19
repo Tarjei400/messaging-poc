@@ -15,6 +15,7 @@ import {
   IMessageScheduler,
   MessageHandler,
   NotSupportedError,
+  PublishOptions,
   ScheduleHandle,
   ScheduledInfo,
   SubscribeOptions,
@@ -54,6 +55,8 @@ const ALL_BUS_FALSE: BusCapabilities = {
   supportsManualAck: false,
   supportsDeadLetter: false,
   reportsDeliveryCount: false,
+  supportsDedup: false,
+  supportsStreamReplay: false,
 };
 
 /**
@@ -166,8 +169,13 @@ export class ResilientScheduler implements IMessageScheduler, IMessageBus {
     return this.run(() => this.innerBus.connectBus());
   }
 
-  publish(topic: Destination, payload: string, routingKey?: string): Promise<void> {
-    return this.run(() => this.innerBus.publish(topic, payload, routingKey));
+  publish(
+    topic: Destination,
+    payload: string,
+    routingKey?: string,
+    options?: PublishOptions,
+  ): Promise<void> {
+    return this.run(() => this.innerBus.publish(topic, payload, routingKey, options));
   }
 
   subscribe(

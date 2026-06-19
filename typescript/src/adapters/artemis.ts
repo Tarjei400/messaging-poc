@@ -9,6 +9,7 @@ import {
   IMessageScheduler,
   IncomingMessage,
   MessageHandler,
+  PublishOptions,
   ScheduleHandle,
   ScheduledInfo,
   SubscribeOptions,
@@ -20,7 +21,14 @@ import { JolokiaClient } from './artemis-jolokia';
  *  infra/artemis broker.xml). Our logical `${topic}.dlq` subscriptions read
  *  from here. */
 const ARTEMIS_DLA = process.env.ARTEMIS_DLA ?? 'mbc.DLQ';
+// The broker-configured multicast expiry address for `mbc.s16.#` (see
+// infra/artemis broker.xml). Our logical `${topic}.expiry` subscriptions read
+// from here, mirroring the `.dlq` → mbc.DLQ mapping.
+const ARTEMIS_EXPIRY = process.env.ARTEMIS_EXPIRY ?? 'mbc.EXPIRY';
 const ROUTING_KEY_PROP = 'routingKey';
+// Artemis honours these well-known message properties natively.
+const ARTEMIS_GROUP_ID = '_AMQ_GROUP_ID'; // pins a group to one consumer (S12)
+const ARTEMIS_DUPL_ID = '_AMQ_DUPL_ID'; // producer dedup within the broker (S13)
 
 export interface ArtemisConfig {
   host: string;
@@ -69,6 +77,9 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
     supportsManualAck: true,
     supportsDeadLetter: true,
     reportsDeliveryCount: true, // AMQP header delivery-count is precise
+    supportsDedup: true, // broker.xml amqpDuplicateDetection=true + _AMQ_DUPL_ID
+    supportsStreamReplay: false, // Artemis has no offset-replay of consumed history
+    supportsMessageGroups: true, // native _AMQ_GROUP_ID pins a group to one consumer
   };
   readonly capabilities: Capabilities = {
     protocol: 'AMQP 1.0',
@@ -99,7 +110,7 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
       port: this.cfg.port,
       username: this.cfg.username,
       password: this.cfg.password,
-      reconnect: false,
+      reconnect: true,
     });
     await once(this.connection, 'connection_open');
     return this.connection;
@@ -216,12 +227,28 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
     topic: Destination,
     payload: string,
     routingKey?: string,
+    options?: PublishOptions,
   ): Promise<void> {
     const sender = await this.getBusSender(topic);
-    sender.send({
-      body: payload,
-      application_properties: { [ROUTING_KEY_PROP]: routingKey ?? topic },
-    });
+    const appProps: Record<string, unknown> = {
+      [ROUTING_KEY_PROP]: routingKey ?? topic,
+      ...(options?.headers ?? {}),
+    };
+    if (options?.dedupId) appProps[ARTEMIS_DUPL_ID] = options.dedupId;
+    const msg: rhea.Message = { body: payload, application_properties: appProps };
+    // S12: set the standard AMQP `group-id` message property. Artemis maps the
+    // AMQP group-id onto its native message-group machinery and pins the group to
+    // a single consumer on the (shared) queue. We also mirror it onto the
+    // `_AMQ_GROUP_ID` application property so the value is visible to consumers.
+    if (options?.groupId) {
+      msg.group_id = options.groupId;
+      appProps[ARTEMIS_GROUP_ID] = options.groupId;
+    }
+    if (options?.priority !== undefined) msg.priority = options.priority;
+    if (options?.replyTo) msg.reply_to = options.replyTo;
+    if (options?.correlationId) msg.correlation_id = options.correlationId;
+    if (options?.ttlMs !== undefined) msg.ttl = options.ttlMs;
+    sender.send(msg);
   }
 
   async subscribe(
@@ -235,11 +262,30 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
 
     // A `${topic}.dlq` subscription reads from the broker's multicast DLA, where
     // Artemis routes messages after `max-delivery-attempts` (set in broker.xml).
-    const address = topic.endsWith('.dlq') ? ARTEMIS_DLA : topic;
+    // A `${topic}.expiry` subscription likewise reads from the multicast expiry
+    // address, where Artemis routes a message whose TTL elapsed un-consumed.
+    const address = topic.endsWith('.dlq')
+      ? ARTEMIS_DLA
+      : topic.endsWith('.expiry')
+        ? ARTEMIS_EXPIRY
+        : topic;
+    // S18: single active consumer / failover is driven by broker.xml — every
+    // queue auto-created under `mbc.s18.#` is exclusive (default-exclusive-queue),
+    // so Artemis dispatches to one consumer at a time and fails over to a standby.
+    // (S12 message grouping likewise needs no option here: the AMQP `group-id`
+    // set on publish makes the broker pin each group to one consumer.)
     const fqqn = `${address}::${subscriberId}`;
 
+    // SSE: a transient per-connection subscription. We append Artemis's queue
+    // attributes to the fully-qualified queue name so the broker auto-creates the
+    // backing multicast queue as auto-delete + max-consumers=1 (exclusive). The
+    // queue is then removed as soon as the SSE connection's receiver detaches, so
+    // a browser disconnect leaves no durable queue behind.
+    const sourceAddress = options.transient
+      ? `${fqqn}?auto-delete=true&max-consumers=1`
+      : fqqn;
     const source = {
-      address: fqqn,
+      address: sourceAddress,
       capabilities: 'topic',
     } as unknown as rhea.Source;
     // Topic routing-key filtering uses an AMQP/JMS selector on a message
@@ -253,11 +299,32 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
     const receiver = this.connection!.open_receiver({
       source,
       autoaccept: false, // the consumer settles explicitly (ack/nack)
-    });
+      // credit_window 1 ≈ prefetch 1: the broker pushes one unsettled message at
+      // a time. This gives fair work-sharing across competing consumers (S9) and,
+      // crucially, lets broker-side priority ordering take effect (S14) — a large
+      // credit window would drain the queue to one consumer before priority could
+      // reorder it.
+      credit_window: 1,
+    } as rhea.ReceiverOptions);
     const onMessage = (ctx: rhea.EventContext) => {
       const msg = ctx.message!;
       const delivery = ctx.delivery!;
-      void handler(this.toIncoming(address, msg, delivery));
+      const incoming = this.toIncoming(address, msg, delivery);
+      // A handler that throws (a random/transient application error) is a failed
+      // delivery, NOT a reason to take down the consumer or leak an unhandled
+      // rejection. Contain it and nack for redelivery — the in-memory reference
+      // does the same (S20).
+      void (async () => {
+        try {
+          await handler(incoming);
+        } catch {
+          try {
+            await incoming.nack(true);
+          } catch {
+            /* already settled or link closed */
+          }
+        }
+      })();
     };
     receiver.on('message', onMessage);
     await once(receiver, 'receiver_open');
@@ -282,6 +349,13 @@ export class ArtemisScheduler implements IMessageScheduler, IMessageBus {
       headers: stringifyProps(msg.application_properties),
       // AMQP `delivery-count` is the number of prior (failed) deliveries.
       deliveryCount: (msg.delivery_count ?? 0) + 1,
+      replyTo: typeof msg.reply_to === 'string' ? msg.reply_to : undefined,
+      correlationId:
+        msg.correlation_id !== undefined ? String(msg.correlation_id) : undefined,
+      groupId:
+        (typeof msg.group_id === 'string' ? msg.group_id : undefined) ??
+        (msg.application_properties?.[ARTEMIS_GROUP_ID] as string | undefined),
+      priority: msg.priority,
       ack: async () => {
         if (settled) return;
         settled = true;
